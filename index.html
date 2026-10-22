@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Free My TV — Trailer</title>
+<style>
+html,body,#player,#player iframe{position:absolute;left:0;top:0;width:100%;height:100%;margin:0;padding:0;border:0;background:#000;overflow:hidden}
+</style>
+</head>
+<body>
+<div id="player"></div>
+<script>
+(function () {
+  function param(name) {
+    var match = new RegExp('[?&]' + name + '=([^&]*)').exec(window.location.search);
+    return match ? decodeURIComponent(match[1].replace(/\+/g, ' ')) : '';
+  }
+  var videoId = param('v'), language = param('hl') || 'pt';
+  var player = null, ready = false;
+
+  function post(message) {
+    message.fmtvPlayer = true;
+    if (window.parent && window.parent !== window) window.parent.postMessage(message, '*');
+  }
+
+  window.addEventListener('message', function (event) {
+    var data = event.data;
+    if (event.source !== window.parent || !data || data.fmtvPlayer !== true || !ready || !player) return;
+    if (data.command === 'play') player.playVideo();
+    else if (data.command === 'pause') player.pauseVideo();
+    else if (data.command === 'toggle') {
+      if (player.getPlayerState() === 1) player.pauseVideo();
+      else player.playVideo();
+    }
+  });
+
+  window.onYouTubeIframeAPIReady = function () {
+    player = new YT.Player('player', {
+      width: '100%',
+      height: '100%',
+      videoId: videoId,
+      playerVars: {
+        autoplay: 1,
+        controls: 0,
+        disablekb: 1,
+        fs: 0,
+        hl: language,
+        iv_load_policy: 3,
+        playsinline: 1,
+        rel: 0,
+        origin: window.location.origin
+      },
+      events: {
+        onReady: function () { ready = true; post({type: 'ready'}); },
+        onStateChange: function (event) { post({type: 'state', state: event.data}); },
+        onError: function (event) { post({type: 'error', code: event.data}); }
+      }
+    });
+  };
+
+  if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) { post({type: 'error', code: 2}); return; }
+  var script = document.createElement('script');
+  script.src = 'https://www.youtube.com/iframe_api';
+  script.onerror = function () { post({type: 'error', code: 5}); };
+  document.head.appendChild(script);
+}());
+</script>
+</body>
+</html>
