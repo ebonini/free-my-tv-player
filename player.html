@@ -17,17 +17,62 @@ html,body,#player,#player iframe{position:absolute;left:0;top:0;width:100%;heigh
     var match = new RegExp('[?&]' + name + '=([^&]*)').exec(window.location.search);
     return match ? decodeURIComponent(match[1].replace(/\+/g, ' ')) : '';
   }
-  var videoId = param('v'), language = param('hl') || 'pt';
-  var player = null, ready = false;
+  var initialVideoId = param('v'), language = param('hl') || 'pt';
+  var session = param('session') || '0';
+  var videoId = initialVideoId, requestId = param('request') || '0';
+  var player = null, ready = false, pendingLoad = null;
+
+  function validVideoId(value) {
+    return /^[A-Za-z0-9_-]{11}$/.test(String(value || ''));
+  }
+
+  function actualVideoId() {
+    try {
+      var data = player && player.getVideoData ? player.getVideoData() : null;
+      return data && data.video_id ? data.video_id : '';
+    } catch (e) { return ''; }
+  }
 
   function post(message) {
     message.fmtvPlayer = true;
+    message.protocol = 2;
+    message.session = session;
+    if (typeof message.requestId === 'undefined') message.requestId = requestId;
+    if (typeof message.videoId === 'undefined') message.videoId = videoId;
     if (window.parent && window.parent !== window) window.parent.postMessage(message, '*');
+  }
+
+  function load(data) {
+    var wanted = String(data.videoId || '');
+    requestId = String(data.requestId || '0');
+    if (!validVideoId(wanted)) {
+      videoId = wanted;
+      post({type: 'error', code: 2});
+      return;
+    }
+    videoId = wanted;
+    pendingLoad = {videoId: wanted, requestId: requestId};
+    post({type: 'loading'});
+    if (!ready || !player) return;
+    pendingLoad = null;
+    try {
+      player.loadVideoById(wanted);
+    } catch (e) {
+      post({type: 'error', code: 5});
+    }
   }
 
   window.addEventListener('message', function (event) {
     var data = event.data;
-    if (event.source !== window.parent || !data || data.fmtvPlayer !== true || !ready || !player) return;
+    if (event.source !== window.parent || !data || data.fmtvPlayer !== true) return;
+    if (data.session && String(data.session) !== session) return;
+    if (data.command === 'load') { load(data); return; }
+    if (data.command === 'stop') {
+      pendingLoad = null;
+      if (ready && player) player.stopVideo();
+      return;
+    }
+    if (!ready || !player) return;
     if (data.command === 'play') player.playVideo();
     else if (data.command === 'pause') player.pauseVideo();
     else if (data.command === 'toggle') {
@@ -37,12 +82,11 @@ html,body,#player,#player iframe{position:absolute;left:0;top:0;width:100%;heigh
   });
 
   window.onYouTubeIframeAPIReady = function () {
-    player = new YT.Player('player', {
+    var options = {
       width: '100%',
       height: '100%',
-      videoId: videoId,
       playerVars: {
-        autoplay: 1,
+        autoplay: initialVideoId ? 1 : 0,
         controls: 0,
         disablekb: 1,
         fs: 0,
@@ -53,14 +97,24 @@ html,body,#player,#player iframe{position:absolute;left:0;top:0;width:100%;heigh
         origin: window.location.origin
       },
       events: {
-        onReady: function () { ready = true; post({type: 'ready'}); },
-        onStateChange: function (event) { post({type: 'state', state: event.data}); },
-        onError: function (event) { post({type: 'error', code: event.data}); }
+        onReady: function () {
+          ready = true;
+          post({type: 'ready', actualId: actualVideoId()});
+          if (pendingLoad) load(pendingLoad);
+        },
+        onStateChange: function (event) {
+          post({type: 'state', state: event.data, actualId: actualVideoId()});
+        },
+        onError: function (event) {
+          post({type: 'error', code: event.data, actualId: actualVideoId()});
+        }
       }
-    });
+    };
+    if (validVideoId(initialVideoId)) options.videoId = initialVideoId;
+    player = new YT.Player('player', options);
   };
 
-  if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) { post({type: 'error', code: 2}); return; }
+  if (initialVideoId && !validVideoId(initialVideoId)) { post({type: 'error', code: 2}); return; }
   var script = document.createElement('script');
   script.src = 'https://www.youtube.com/iframe_api';
   script.onerror = function () { post({type: 'error', code: 5}); };
